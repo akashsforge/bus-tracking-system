@@ -44,7 +44,7 @@
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
-    // 1. Initialize Map (Centered around default coordinates)
+    // 1. Initialize Map
     const map = L.map('map').setView([10.5280, 76.2150], 13);
     
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -67,9 +67,19 @@
     }
 
     // 3. Update Map Markers and Sidebar List
-    function updateUI(trips) {
+    function updateUI(data) {
       const busListContainer = document.getElementById('bus-list');
       busListContainer.innerHTML = '';
+
+      // Normalize incoming JSON structure into a flat Array
+      let trips = [];
+      if (Array.isArray(data)) {
+        trips = data;
+      } else if (data && Array.isArray(data.data)) {
+        trips = data.data;
+      } else if (data && typeof data === 'object') {
+        trips = [data];
+      }
 
       if (!trips || trips.length === 0) {
         busListContainer.innerHTML = '<p style="color: #64748b;">No active trips right now.</p>';
@@ -84,6 +94,9 @@
         const occupancy = trip.current_occupancy || 0;
         const capacity = trip.buses?.total_capacity || 40;
         const percentage = Math.min(100, Math.round((occupancy / capacity) * 100));
+
+        // Skip marker rendering if coordinates are missing/invalid
+        if (!lat || !lng) return;
 
         // Update or Add Map Marker
         if (busMarkers[trip.id]) {
