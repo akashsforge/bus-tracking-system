@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Public Transport Tracker</title>
+  <!-- Leaflet CSS for Maps -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body { display: flex; flex-direction: column; height: 100vh; background-color: #f4f6f9; }
+    header { background: #1e293b; color: white; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    #status-pill { background: #22c55e; color: white; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.85rem; }
+    #main-container { display: flex; flex: 1; overflow: hidden; }
+    #sidebar { width: 350px; background: white; border-right: 1px solid #e2e8f0; overflow-y: auto; padding: 1rem; }
+    #map { flex: 1; height: 100%; }
+    .bus-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    .bus-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; }
+    .bus-number { font-weight: bold; color: #0f172a; font-size: 1.1rem; }
+    .route-name { color: #64748b; font-size: 0.9rem; margin-bottom: 0.5rem; }
+    .occupancy-bar-bg { background: #e2e8f0; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 0.5rem; }
+    .occupancy-bar-fill { height: 100%; background: #3b82f6; transition: width 0.3s ease; }
+    .occupancy-text { font-size: 0.8rem; color: #475569; margin-top: 0.25rem; text-align: right; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🚌 Live Transport Dashboard</h1>
+    <span id="status-pill">System Live</span>
+  </header>
+
+  <div id="main-container">
+    <div id="sidebar">
+      <h2>Active Buses</h2>
+      <div id="bus-list" style="margin-top: 1rem;">
+        <p style="color: #64748b;">Loading bus data...</p>
+      </div>
+    </div>
+    <div id="map"></div>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // 1. Initialize Map (Centered around default coordinates)
+    const map = L.map('map').setView([10.5280, 76.2150], 13);
+    
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    const busMarkers = {};
+    const N8N_ENDPOINT = "https://akash154.app.n8n.cloud/webhook/search-buses";
+
+    // 2. Fetch Active Buses from Workflow 03
+    async function fetchBusData() {
+      try {
+        const response = await fetch(N8N_ENDPOINT);
+        const data = await response.json();
+        updateUI(data);
+      } catch (error) {
+        console.error("Error fetching bus locations:", error);
+      }
+    }
+
+    // 3. Update Map Markers and Sidebar List
+    function updateUI(trips) {
+      const busListContainer = document.getElementById('bus-list');
+      busListContainer.innerHTML = '';
+
+      if (!trips || trips.length === 0) {
+        busListContainer.innerHTML = '<p style="color: #64748b;">No active trips right now.</p>';
+        return;
+      }
+
+      trips.forEach(trip => {
+        const busNum = trip.buses?.bus_number || "Bus";
+        const routeName = trip.routes?.route_name || "Active Route";
+        const lat = trip.current_lat;
+        const lng = trip.current_lng;
+        const occupancy = trip.current_occupancy || 0;
+        const capacity = trip.buses?.total_capacity || 40;
+        const percentage = Math.min(100, Math.round((occupancy / capacity) * 100));
+
+        // Update or Add Map Marker
+        if (busMarkers[trip.id]) {
+          busMarkers[trip.id].setLatLng([lat, lng]);
+        } else {
+          busMarkers[trip.id] = L.marker([lat, lng])
+            .addTo(map)
+            .bindPopup(`<b>${busNum}</b><br>${routeName}<br>Seats occupied: ${occupancy}/${capacity}`);
+        }
+
+        // Render Sidebar Card
+        const card = document.createElement('div');
+        card.className = 'bus-card';
+        card.innerHTML = `
+          <div class="bus-header">
+            <span class="bus-number">${busNum}</span>
+            <span style="font-size: 0.8rem; font-weight: 600; color: ${percentage > 85 ? '#ef4444' : '#22c55e'}">${percentage}% Full</span>
+          </div>
+          <div class="route-name">${routeName}</div>
+          <div class="occupancy-bar-bg">
+            <div class="occupancy-bar-fill" style="width: ${percentage}%; background-color: ${percentage > 85 ? '#ef4444' : '#3b82f6'};"></div>
+          </div>
+          <div class="occupancy-text">${occupancy} / ${capacity} passengers</div>
+        `;
+        busListContainer.appendChild(card);
+      });
+    }
+
+    // Initial Fetch & Auto-Refresh every 5 seconds
+    fetchBusData();
+    setInterval(fetchBusData, 5000);
+  </script>
+</body>
+</html>
