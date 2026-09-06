@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Driver Broadcast</title>
+</head>
+<body>
+    <h2>Driver Portal</h2>
+    <input type="text" id="driverName" placeholder="Driver Name"><br><br>
+    <select id="routeSelect">
+        <option value="11111111-2222-3333-4444-555555555555">Thrissur Town Loop</option>
+    </select><br><br>
+    <button onclick="startTrip()">Start Route Broadcast</button>
+    <p id="status"></p>
+
+    <script>
+        let busId = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"; // Registered Bus UUID
+
+        function startTrip() {
+            if (!navigator.geolocation) {
+                alert("Geolocation is not supported by your browser");
+                return;
+            }
+
+            document.getElementById("status").innerText = "Broadcasting location...";
+
+            // Send GPS update every 5 seconds
+            navigator.geolocation.watchPosition(position => {
+                const payload = {
+                    bus_id: busId,
+                    driver_name: document.getElementById("driverName").value,
+                    route_id: document.getElementById("routeSelect").value,
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude
+                };
+
+                fetch('https://akash154.app.n8n.cloud/webhook/driver-location', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+            }, error => console.error(error), { enableHighAccuracy: true });
+        }
+    </script>
+</body>
+</html>
