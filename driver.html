@@ -1,34 +1,200 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Driver Broadcast</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Driver Portal — Bus Tracker</title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    body {
+        min-height: 100vh;
+        background-color: #f4f6f9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+    }
+    .card {
+        background: #ffffff;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        width: 100%;
+        max-width: 420px;
+        overflow: hidden;
+    }
+    .card-header {
+        background-color: #1a252f;
+        color: #fff;
+        padding: 18px 20px;
+    }
+    .card-header h1 { font-size: 1.15rem; }
+    .card-header p { font-size: 0.8rem; color: #b0bec5; margin-top: 4px; }
+    .card-body { padding: 20px; }
+    label { display: block; font-size: 0.8rem; font-weight: 600; color: #555; margin-bottom: 6px; margin-top: 14px; }
+    label:first-child { margin-top: 0; }
+    input[type="text"], select {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        font-size: 0.9rem;
+        outline: none;
+        background: #fff;
+    }
+    input[type="text"]:focus, select:focus { border-color: #3498db; }
+    button {
+        width: 100%;
+        margin-top: 20px;
+        padding: 12px;
+        border: none;
+        border-radius: 6px;
+        background-color: #27ae60;
+        color: #fff;
+        font-size: 0.95rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+    }
+    button:hover { background-color: #219150; }
+    button:disabled { background-color: #95a5a6; cursor: not-allowed; }
+    button.stop { background-color: #e74c3c; }
+    button.stop:hover { background-color: #c0392b; }
+    #status {
+        margin-top: 16px;
+        font-size: 0.85rem;
+        padding: 10px 12px;
+        border-radius: 6px;
+        display: none;
+    }
+    #status.active { display: block; background-color: #eafaf1; color: #1e8449; border: 1px solid #a9dfbf; }
+    #status.error { display: block; background-color: #fdecea; color: #c0392b; border: 1px solid #f5b7b1; }
+    #status.idle { display: block; background-color: #fef9e7; color: #9a7d0a; border: 1px solid #f9e79f; }
+    .pulse {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: #27ae60;
+        margin-right: 6px;
+        animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+        0% { opacity: 1; }
+        50% { opacity: 0.3; }
+        100% { opacity: 1; }
+    }
+</style>
 </head>
 <body>
-    <h2>Driver Portal</h2>
-    <input type="text" id="driverName" placeholder="Driver Name"><br><br>
-    <select id="routeSelect">
-        <option value="11111111-2222-3333-4444-555555555555">Thrissur Town Loop</option>
-    </select><br><br>
-    <button onclick="startTrip()">Start Route Broadcast</button>
-    <p id="status"></p>
 
-    <script>
-        let busId = "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"; // Registered Bus UUID
+<div class="card">
+    <div class="card-header">
+        <h1>🚌 Driver Portal</h1>
+        <p>Broadcast your live location to passengers</p>
+    </div>
+    <div class="card-body">
+        <label for="driverName">Your Name</label>
+        <input type="text" id="driverName" placeholder="e.g. Ravi Kumar">
 
-        function startTrip() {
-            if (!navigator.geolocation) {
-                alert("Geolocation is not supported by your browser");
-                return;
-            }
+        <label for="busSelect">Bus</label>
+        <select id="busSelect"></select>
 
-            document.getElementById("status").innerText = "Broadcasting location...";
+        <label for="routeSelect">Route You're Driving</label>
+        <select id="routeSelect"></select>
 
-            // Send GPS update every 5 seconds
-            navigator.geolocation.watchPosition(position => {
+        <button id="toggleBtn" onclick="toggleTrip()">Start Route Broadcast</button>
+
+        <div id="status"></div>
+    </div>
+</div>
+
+<script>
+    // ---------------------------------------------------------------
+    // CONFIG: Replace with routes/buses fetched from Supabase once
+    // you have a "get-routes" / "get-buses" n8n webhook. For now this
+    // is a hardcoded list so drivers can pick the correct route+bus.
+    //
+    // waypoints = ordered list of stop names along the route. These
+    // names are what get matched against passenger destination search
+    // on the main tracker page, so keep them consistent and specific
+    // (e.g. "Sakthan Stand" not just "Stand").
+    // ---------------------------------------------------------------
+    const ROUTES = [
+        {
+            id: "11111111-2222-3333-4444-555555555555",
+            name: "Thrissur Town Loop",
+            waypoints: ["Sakthan Stand", "Round South", "Ollur", "Railway Station"]
+        },
+        {
+            id: "22222222-3333-4444-5555-666666666666",
+            name: "Thrissur - Guruvayur",
+            waypoints: ["Sakthan Stand", "Punkunnam", "Chowannur", "Guruvayur"]
+        },
+        {
+            id: "33333333-4444-5555-6666-777777777777",
+            name: "Thrissur - Kodungallur",
+            waypoints: ["Sakthan Stand", "Mannuthy", "Irinjalakuda", "Kodungallur"]
+        }
+    ];
+
+    const BUSES = [
+        { id: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d", label: "Bus KL-08 AB 1234" }
+        // Add more registered buses here as they're added in Supabase
+    ];
+
+    const routeSelect = document.getElementById("routeSelect");
+    ROUTES.forEach(r => {
+        const opt = document.createElement("option");
+        opt.value = r.id;
+        opt.textContent = r.name;
+        routeSelect.appendChild(opt);
+    });
+
+    const busSelect = document.getElementById("busSelect");
+    BUSES.forEach(b => {
+        const opt = document.createElement("option");
+        opt.value = b.id;
+        opt.textContent = b.label;
+        busSelect.appendChild(opt);
+    });
+
+    let watchId = null;
+    const statusEl = document.getElementById("status");
+    const toggleBtn = document.getElementById("toggleBtn");
+
+    function setStatus(message, type) {
+        statusEl.className = type;
+        statusEl.innerHTML = type === "active" ? `<span class="pulse"></span>${message}` : message;
+    }
+
+    function toggleTrip() {
+        if (watchId !== null) {
+            stopTrip();
+        } else {
+            startTrip();
+        }
+    }
+
+    function startTrip() {
+        if (!navigator.geolocation) {
+            setStatus("Geolocation is not supported by your browser.", "error");
+            return;
+        }
+        const driverName = document.getElementById("driverName").value.trim();
+        if (!driverName) {
+            setStatus("Please enter your name before starting.", "error");
+            return;
+        }
+
+        setStatus("Getting location…", "idle");
+
+        watchId = navigator.geolocation.watchPosition(
+            position => {
                 const payload = {
-                    bus_id: busId,
-                    driver_name: document.getElementById("driverName").value,
-                    route_id: document.getElementById("routeSelect").value,
+                    bus_id: busSelect.value,
+                    driver_name: driverName,
+                    route_id: routeSelect.value,
+                    route_name: routeSelect.options[routeSelect.selectedIndex].text,
                     latitude: position.coords.latitude,
                     longitude: position.coords.longitude
                 };
@@ -37,9 +203,37 @@
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
+                }).then(() => {
+                    setStatus(`Broadcasting on <b>${payload.route_name}</b>`, "active");
+                }).catch(() => {
+                    setStatus("Location captured but failed to send — check your connection.", "error");
                 });
-            }, error => console.error(error), { enableHighAccuracy: true });
+            },
+            error => {
+                setStatus(`Location error: ${error.message}`, "error");
+            },
+            { enableHighAccuracy: true }
+        );
+
+        toggleBtn.textContent = "Stop Broadcast";
+        toggleBtn.classList.add("stop");
+        document.getElementById("driverName").setAttribute("disabled", "disabled");
+        routeSelect.setAttribute("disabled", "disabled");
+        busSelect.setAttribute("disabled", "disabled");
+    }
+
+    function stopTrip() {
+        if (watchId !== null) {
+            navigator.geolocation.clearWatch(watchId);
+            watchId = null;
         }
-    </script>
+        setStatus("Broadcast stopped.", "idle");
+        toggleBtn.textContent = "Start Route Broadcast";
+        toggleBtn.classList.remove("stop");
+        document.getElementById("driverName").removeAttribute("disabled");
+        routeSelect.removeAttribute("disabled");
+        busSelect.removeAttribute("disabled");
+    }
+</script>
 </body>
 </html>

@@ -86,6 +86,24 @@
             border-color: #3498db;
         }
 
+        .location-hint {
+            font-size: 0.72rem;
+            color: #999;
+            margin-top: 6px;
+        }
+
+        .match-banner {
+            display: none;
+            padding: 12px 15px;
+            background-color: #eafaf1;
+            border-bottom: 1px solid #a9dfbf;
+            color: #1e8449;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .match-banner.show { display: block; }
+
         .bus-list {
             flex: 1;
             overflow-y: auto;
@@ -107,6 +125,22 @@
             box-shadow: 0 4px 8px rgba(0,0,0,0.08);
         }
 
+        .bus-card.matched {
+            border: 2px solid #27ae60;
+            background-color: #f4fdf7;
+        }
+
+        .match-tag {
+            display: inline-block;
+            background-color: #27ae60;
+            color: #fff;
+            font-size: 0.68rem;
+            font-weight: bold;
+            padding: 2px 7px;
+            border-radius: 10px;
+            margin-bottom: 6px;
+        }
+
         .bus-header {
             display: flex;
             justify-content: space-between;
@@ -123,6 +157,13 @@
         .route-name {
             font-size: 0.85rem;
             color: #7f8c8d;
+            margin-bottom: 4px;
+        }
+
+        .distance-info {
+            font-size: 0.8rem;
+            color: #2980b9;
+            font-weight: 600;
             margin-bottom: 8px;
         }
 
@@ -172,10 +213,10 @@
             }
             #sidebar {
                 width: 100%;
-                height: 40%;
+                height: 45%;
             }
             #map {
-                height: 60%;
+                height: 55%;
             }
         }
     </style>
@@ -190,8 +231,10 @@
     <div class="main-container">
         <div id="sidebar">
             <div class="search-box">
-                <input type="text" id="destinationInput" placeholder="Search route or destination..." oninput="filterBuses()">
+                <input type="text" id="destinationInput" placeholder="Where are you headed? e.g. Guruvayur" oninput="filterBuses()">
+                <div class="location-hint" id="locationHint">Locating you…</div>
             </div>
+            <div class="match-banner" id="matchBanner"></div>
             <div class="bus-list" id="busList">
                 <div class="empty-state">Fetching active buses...</div>
             </div>
@@ -222,6 +265,15 @@
             popupAnchor: [0, -18]
         });
 
+        // Matched Bus Icon (highlighted)
+        const busIconMatched = L.icon({
+            iconUrl: 'https://cdn-icons-png.flaticon.com/512/3448/3448339.png',
+            iconSize: [46, 46],
+            iconAnchor: [23, 23],
+            popupAnchor: [0, -23],
+            className: 'matched-bus-icon'
+        });
+
         // User Location Icon
         const userIcon = L.icon({
             iconUrl: 'https://cdn-icons-png.flaticon.com/512/9131/9131526.png',
@@ -231,20 +283,48 @@
 
         let markers = {};
         let activeBusesData = [];
+        let userLocation = null; // { lat, lng }
 
-        // 1. Locate User on Map
+        // ---------------------------------------------------------------
+        // Haversine distance in km between two lat/lng points
+        // ---------------------------------------------------------------
+        function distanceKm(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) ** 2 +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        // 1. Locate & continuously track the user on the map
+        let userMarker = null;
         if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
+            navigator.geolocation.watchPosition(
                 position => {
-                    const userLat = position.coords.latitude;
-                    const userLng = position.coords.longitude;
-                    L.marker([userLat, userLng], { icon: userIcon })
-                        .addTo(map)
-                        .bindPopup("<b>You are here</b>");
+                    userLocation = { lat: position.coords.latitude, lng: position.coords.longitude };
+                    document.getElementById('locationHint').textContent = "📍 Your location is being tracked";
+
+                    if (userMarker) {
+                        userMarker.setLatLng([userLocation.lat, userLocation.lng]);
+                    } else {
+                        userMarker = L.marker([userLocation.lat, userLocation.lng], { icon: userIcon })
+                            .addTo(map)
+                            .bindPopup("<b>You are here</b>");
+                        map.setView([userLocation.lat, userLocation.lng], 14);
+                    }
+                    // Re-render so distance-to-bus figures stay current
+                    updateUI(activeBusesData);
                 },
-                error => console.warn("Geolocation denied or unavailable:", error.message),
+                error => {
+                    document.getElementById('locationHint').textContent = "Location unavailable — enable GPS for distance info";
+                    console.warn("Geolocation denied or unavailable:", error.message);
+                },
                 { enableHighAccuracy: true }
             );
+        } else {
+            document.getElementById('locationHint').textContent = "Geolocation not supported by this browser";
         }
 
         // 2. Fetch Active Bus Data
@@ -255,7 +335,7 @@
 
                 // Handle both raw arrays or objects containing array properties
                 activeBusesData = Array.isArray(data) ? data : (data.data || []);
-                
+
                 updateUI(activeBusesData);
                 document.getElementById('systemStatus').innerText = "System Live";
                 document.getElementById('systemStatus').style.backgroundColor = "#27ae60";
@@ -266,29 +346,62 @@
             }
         }
 
+        // Does this trip's route match the destination the passenger typed?
+        function matchesDestination(trip, searchTerm) {
+            if (!searchTerm) return false;
+            const routeName = trip.routes?.route_name?.toLowerCase() || '';
+            const waypoints = (trip.routes?.waypoints || []);
+            const waypointsText = (Array.isArray(waypoints) ? waypoints.join(' ') : JSON.stringify(waypoints)).toLowerCase();
+            return routeName.includes(searchTerm) || waypointsText.includes(searchTerm);
+        }
+
         // 3. Render Markers & Sidebar Cards
         function updateUI(buses) {
             const busListEl = document.getElementById('busList');
-            const searchTerm = document.getElementById('destinationInput').value.toLowerCase();
+            const bannerEl = document.getElementById('matchBanner');
+            const searchTerm = document.getElementById('destinationInput').value.toLowerCase().trim();
 
-            // Filter buses based on user search
-            const filteredBuses = buses.filter(trip => {
-                const routeName = trip.routes?.route_name?.toLowerCase() || '';
-                const waypoints = JSON.stringify(trip.routes?.waypoints || '').toLowerCase();
-                const busName = trip.buses?.bus_number?.toLowerCase() || '';
-                return routeName.includes(searchTerm) || waypoints.includes(searchTerm) || busName.includes(searchTerm);
-            });
+            // Tag every bus with whether it matches, then sort matches first
+            const annotated = buses.map(trip => ({
+                trip,
+                matched: matchesDestination(trip, searchTerm)
+            })).sort((a, b) => (b.matched - a.matched));
 
-            if (filteredBuses.length === 0) {
-                busListEl.innerHTML = `<div class="empty-state">No active buses matching search.</div>`;
+            const anyMatched = annotated.some(a => a.matched);
+
+            if (searchTerm && anyMatched) {
+                bannerEl.textContent = "🚌 Bus found heading your way!";
+                bannerEl.classList.add('show');
+            } else if (searchTerm && !anyMatched) {
+                bannerEl.textContent = "No active bus currently covers that destination.";
+                bannerEl.classList.add('show');
+                bannerEl.style.backgroundColor = "#fdecea";
+                bannerEl.style.color = "#c0392b";
+            } else {
+                bannerEl.classList.remove('show');
+                bannerEl.style.backgroundColor = "";
+                bannerEl.style.color = "";
+            }
+            if (searchTerm && anyMatched) {
+                bannerEl.style.backgroundColor = "";
+                bannerEl.style.color = "";
+            }
+
+            // When searching, only list matches; otherwise show everything
+            const listToRender = searchTerm ? annotated.filter(a => a.matched) : annotated;
+
+            if (listToRender.length === 0) {
+                busListEl.innerHTML = searchTerm
+                    ? `<div class="empty-state">No active buses matching "${searchTerm}".</div>`
+                    : `<div class="empty-state">No active buses right now.</div>`;
             } else {
                 busListEl.innerHTML = '';
             }
 
-            // Track active IDs to clear stale markers
+            // Track active IDs to clear stale markers (all buses stay on map, matched or not)
             const currentTripIds = new Set();
 
-            filteredBuses.forEach(trip => {
+            annotated.forEach(({ trip, matched }) => {
                 const tripId = trip.id || trip.bus_id;
                 currentTripIds.add(tripId);
 
@@ -300,16 +413,23 @@
                 const capacity = trip.buses?.total_capacity || 40;
                 const fillPercent = Math.min(Math.round((occupancy / capacity) * 100), 100);
 
+                let dist = null;
+                if (userLocation && !isNaN(lat) && !isNaN(lng)) {
+                    dist = distanceKm(userLocation.lat, userLocation.lng, lat, lng);
+                }
+
                 // Determine occupancy bar color
                 let barColor = "#27ae60"; // Green
                 if (fillPercent > 80) barColor = "#e74c3c"; // Red
                 else if (fillPercent > 50) barColor = "#f39c12"; // Yellow
 
-                // Update or Create Map Marker
+                // Update or Create Map Marker (always visible on map regardless of search)
+                const icon = matched ? busIconMatched : busIcon;
                 if (markers[tripId]) {
                     markers[tripId].setLatLng([lat, lng]);
+                    markers[tripId].setIcon(icon);
                 } else {
-                    markers[tripId] = L.marker([lat, lng], { icon: busIcon })
+                    markers[tripId] = L.marker([lat, lng], { icon })
                         .addTo(map)
                         .bindPopup(`
                             <b>${busName}</b><br>
@@ -318,19 +438,23 @@
                         `);
                 }
 
-                // Append Sidebar Card
+                // Only list matched buses when the user is searching
+                if (searchTerm && !matched) return;
+
                 const card = document.createElement('div');
-                card.className = 'bus-card';
+                card.className = matched ? 'bus-card matched' : 'bus-card';
                 card.onclick = () => {
                     map.flyTo([lat, lng], 15, { duration: 1.2 });
                     markers[tripId].openPopup();
                 };
 
                 card.innerHTML = `
+                    ${matched ? '<div class="match-tag">✓ MATCHES YOUR DESTINATION</div>' : ''}
                     <div class="bus-header">
                         <span class="bus-title">🚌 ${busName}</span>
                     </div>
                     <div class="route-name">📍 ${routeName}</div>
+                    ${dist !== null ? `<div class="distance-info">${dist.toFixed(1)} km from you</div>` : ''}
                     <div class="occupancy-container">
                         <div class="occupancy-text">
                             <span>Occupancy</span>
@@ -344,7 +468,7 @@
                 busListEl.appendChild(card);
             });
 
-            // Remove markers for buses no longer active or filtered out
+            // Remove markers for buses no longer active
             Object.keys(markers).forEach(id => {
                 if (!currentTripIds.has(id)) {
                     map.removeLayer(markers[id]);
