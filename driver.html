@@ -30,8 +30,36 @@
     .card-header h1 { font-size: 1.15rem; }
     .card-header p { font-size: 0.8rem; color: #b0bec5; margin-top: 4px; }
     .card-body { padding: 20px; }
-    label { display: block; font-size: 0.8rem; font-weight: 600; color: #555; margin-bottom: 6px; margin-top: 14px; }
-    label:first-child { margin-top: 0; }
+
+    .step {
+        border-left: 3px solid #e2e8f0;
+        padding: 4px 0 4px 16px;
+        margin-bottom: 4px;
+        opacity: 0.4;
+        pointer-events: none;
+        transition: opacity 0.2s ease, border-color 0.2s ease;
+    }
+    .step.active, .step.done {
+        opacity: 1;
+        pointer-events: auto;
+    }
+    .step.done { border-left-color: #27ae60; }
+    .step.active { border-left-color: #3498db; }
+
+    .step-title {
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: #7f8c8d;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .step.done .step-title { color: #1e8449; }
+    .step.active .step-title { color: #2c3e50; }
+
+    label { display: block; font-size: 0.78rem; font-weight: 600; color: #555; margin-bottom: 6px; margin-top: 12px; }
+    label:first-of-type { margin-top: 0; }
     input[type="text"], select {
         width: 100%;
         padding: 10px 12px;
@@ -42,6 +70,8 @@
         background: #fff;
     }
     input[type="text"]:focus, select:focus { border-color: #3498db; }
+    input:disabled, select:disabled { background-color: #f4f6f9; color: #999; }
+
     button {
         width: 100%;
         margin-top: 20px;
@@ -55,10 +85,22 @@
         cursor: pointer;
         transition: background-color 0.15s ease;
     }
-    button:hover { background-color: #219150; }
-    button:disabled { background-color: #95a5a6; cursor: not-allowed; }
+    button:hover:not(:disabled) { background-color: #219150; }
+    button:disabled { background-color: #b7c4cc; cursor: not-allowed; }
     button.stop { background-color: #e74c3c; }
     button.stop:hover { background-color: #c0392b; }
+
+    #locationStatus {
+        font-size: 0.82rem;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background-color: #fef9e7;
+        color: #9a7d0a;
+        border: 1px solid #f9e79f;
+    }
+    #locationStatus.ok { background-color: #eafaf1; color: #1e8449; border-color: #a9dfbf; }
+    #locationStatus.err { background-color: #fdecea; color: #c0392b; border-color: #f5b7b1; }
+
     #status {
         margin-top: 16px;
         font-size: 0.85rem;
@@ -69,6 +111,7 @@
     #status.active { display: block; background-color: #eafaf1; color: #1e8449; border: 1px solid #a9dfbf; }
     #status.error { display: block; background-color: #fdecea; color: #c0392b; border: 1px solid #f5b7b1; }
     #status.idle { display: block; background-color: #fef9e7; color: #9a7d0a; border: 1px solid #f9e79f; }
+
     .pulse {
         display: inline-block;
         width: 8px;
@@ -93,78 +136,117 @@
         <p>Broadcast your live location to passengers</p>
     </div>
     <div class="card-body">
-        <label for="driverName">Your Name</label>
-        <input type="text" id="driverName" placeholder="e.g. Ravi Kumar">
 
-        <label for="busSelect">Bus</label>
-        <select id="busSelect"></select>
+        <!-- Step 1: Location must be confirmed before anything else -->
+        <div class="step active" id="step1">
+            <div class="step-title">1. Confirm your location</div>
+            <div id="locationStatus">Detecting your location…</div>
+        </div>
 
-        <label for="routeSelect">Route You're Driving</label>
-        <select id="routeSelect"></select>
+        <!-- Step 2: Driver + bus identity -->
+        <div class="step" id="step2">
+            <div class="step-title">2. Bus &amp; driver details</div>
+            <label for="driverName">Your Name</label>
+            <input type="text" id="driverName" placeholder="e.g. Ravi Kumar" disabled>
 
-        <button id="toggleBtn" onclick="toggleTrip()">Start Route Broadcast</button>
+            <label for="busName">Bus Name</label>
+            <input type="text" id="busName" placeholder="e.g. Sree Guruvayurappan" disabled>
 
+            <label for="plateNumber">Number Plate</label>
+            <input type="text" id="plateNumber" placeholder="e.g. KL-08 AB 1234" disabled>
+        </div>
+
+        <!-- Step 3: Destination -->
+        <div class="step" id="step3">
+            <div class="step-title">3. Where are you headed?</div>
+            <label for="destination">Destination</label>
+            <input type="text" id="destination" placeholder="e.g. Guruvayur" disabled>
+        </div>
+
+        <button id="toggleBtn" onclick="toggleTrip()" disabled>Waiting for location…</button>
         <div id="status"></div>
     </div>
 </div>
 
 <script>
-    // ---------------------------------------------------------------
-    // CONFIG: Replace with routes/buses fetched from Supabase once
-    // you have a "get-routes" / "get-buses" n8n webhook. For now this
-    // is a hardcoded list so drivers can pick the correct route+bus.
-    //
-    // waypoints = ordered list of stop names along the route. These
-    // names are what get matched against passenger destination search
-    // on the main tracker page, so keep them consistent and specific
-    // (e.g. "Sakthan Stand" not just "Stand").
-    // ---------------------------------------------------------------
-    const ROUTES = [
-        {
-            id: "11111111-2222-3333-4444-555555555555",
-            name: "Thrissur Town Loop",
-            waypoints: ["Sakthan Stand", "Round South", "Ollur", "Railway Station"]
-        },
-        {
-            id: "22222222-3333-4444-5555-666666666666",
-            name: "Thrissur - Guruvayur",
-            waypoints: ["Sakthan Stand", "Punkunnam", "Chowannur", "Guruvayur"]
-        },
-        {
-            id: "33333333-4444-5555-6666-777777777777",
-            name: "Thrissur - Kodungallur",
-            waypoints: ["Sakthan Stand", "Mannuthy", "Irinjalakuda", "Kodungallur"]
-        }
-    ];
-
-    const BUSES = [
-        { id: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d", label: "Bus KL-08 AB 1234" }
-        // Add more registered buses here as they're added in Supabase
-    ];
-
-    const routeSelect = document.getElementById("routeSelect");
-    ROUTES.forEach(r => {
-        const opt = document.createElement("option");
-        opt.value = r.id;
-        opt.textContent = r.name;
-        routeSelect.appendChild(opt);
-    });
-
-    const busSelect = document.getElementById("busSelect");
-    BUSES.forEach(b => {
-        const opt = document.createElement("option");
-        opt.value = b.id;
-        opt.textContent = b.label;
-        busSelect.appendChild(opt);
-    });
-
-    let watchId = null;
-    const statusEl = document.getElementById("status");
+    const step1 = document.getElementById("step1");
+    const step2 = document.getElementById("step2");
+    const step3 = document.getElementById("step3");
+    const locationStatusEl = document.getElementById("locationStatus");
+    const driverNameEl = document.getElementById("driverName");
+    const busNameEl = document.getElementById("busName");
+    const plateNumberEl = document.getElementById("plateNumber");
+    const destinationEl = document.getElementById("destination");
     const toggleBtn = document.getElementById("toggleBtn");
+    const statusEl = document.getElementById("status");
+
+    let currentPosition = null; // last known {lat, lng} — this becomes the route's start point
+    let startLocationName = null; // reverse-geocoded readable place name, if available
+    let watchId = null;
+    let locationConfirmed = false;
 
     function setStatus(message, type) {
         statusEl.className = type;
         statusEl.innerHTML = type === "active" ? `<span class="pulse"></span>${message}` : message;
+    }
+
+    // Turn lat/lng into a readable place name using OpenStreetMap's free
+    // reverse-geocoding service. Falls back to raw coordinates if it fails.
+    async function reverseGeocode(lat, lng) {
+        try {
+            const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=14`);
+            const data = await res.json();
+            const a = data.address || {};
+            return a.suburb || a.neighbourhood || a.village || a.town || a.city_district || a.city || null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Step 1: get the driver's location FIRST, before unlocking the
+    // rest of the form. This keeps geolocating tied to a real position
+    // fix rather than assuming permission will succeed later.
+    // ---------------------------------------------------------------
+    if (!navigator.geolocation) {
+        locationStatusEl.textContent = "Geolocation is not supported by this browser.";
+        locationStatusEl.className = "err";
+    } else {
+        navigator.geolocation.getCurrentPosition(
+            async position => {
+                currentPosition = { lat: position.coords.latitude, lng: position.coords.longitude };
+                locationConfirmed = true;
+
+                locationStatusEl.textContent = `📍 Location confirmed (${currentPosition.lat.toFixed(4)}, ${currentPosition.lng.toFixed(4)})`;
+                locationStatusEl.className = "ok";
+                step1.classList.add("done");
+                step1.classList.remove("active");
+
+                // Unlock step 2
+                step2.classList.add("active");
+                driverNameEl.disabled = false;
+                busNameEl.disabled = false;
+                plateNumberEl.disabled = false;
+
+                // Unlock step 3 and the submit button
+                step3.classList.add("active");
+                destinationEl.disabled = false;
+                toggleBtn.disabled = false;
+                toggleBtn.textContent = "Start Route Broadcast";
+
+                // Best-effort: resolve a readable name for the starting point.
+                // Doesn't block the form — the trip can start before this resolves.
+                startLocationName = await reverseGeocode(currentPosition.lat, currentPosition.lng);
+                if (startLocationName) {
+                    locationStatusEl.textContent = `📍 Location confirmed — starting near ${startLocationName}`;
+                }
+            },
+            error => {
+                locationStatusEl.textContent = `Location error: ${error.message}. Enable GPS and reload.`;
+                locationStatusEl.className = "err";
+            },
+            { enableHighAccuracy: true }
+        );
     }
 
     function toggleTrip() {
@@ -176,25 +258,34 @@
     }
 
     function startTrip() {
-        if (!navigator.geolocation) {
-            setStatus("Geolocation is not supported by your browser.", "error");
+        if (!locationConfirmed) {
+            setStatus("Location hasn't been confirmed yet.", "error");
             return;
         }
-        const driverName = document.getElementById("driverName").value.trim();
-        if (!driverName) {
-            setStatus("Please enter your name before starting.", "error");
-            return;
-        }
+        const driverName = driverNameEl.value.trim();
+        const busName = busNameEl.value.trim();
+        const plateNumber = plateNumberEl.value.trim();
+        const destination = destinationEl.value.trim();
 
-        setStatus("Getting location…", "idle");
+        if (!driverName) { setStatus("Please enter your name.", "error"); return; }
+        if (!plateNumber) { setStatus("Please enter the number plate.", "error"); return; }
+        if (!destination) { setStatus("Please enter your destination.", "error"); return; }
+
+        const routeName = `${startLocationName || 'Current location'} → ${destination}`;
+
+        setStatus("Starting broadcast…", "idle");
 
         watchId = navigator.geolocation.watchPosition(
             position => {
                 const payload = {
-                    bus_id: busSelect.value,
                     driver_name: driverName,
-                    route_id: routeSelect.value,
-                    route_name: routeSelect.options[routeSelect.selectedIndex].text,
+                    bus_name: busName,
+                    plate_number: plateNumber,
+                    destination: destination,
+                    start_location_name: startLocationName,
+                    start_latitude: currentPosition.lat,
+                    start_longitude: currentPosition.lng,
+                    route_name: routeName,
                     latitude: position.coords.latitude,
                     longitude: position.coords.longitude
                 };
@@ -204,7 +295,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 }).then(() => {
-                    setStatus(`Broadcasting on <b>${payload.route_name}</b>`, "active");
+                    setStatus(`Broadcasting <b>${plateNumber}</b> — ${routeName}`, "active");
                 }).catch(() => {
                     setStatus("Location captured but failed to send — check your connection.", "error");
                 });
@@ -217,9 +308,10 @@
 
         toggleBtn.textContent = "Stop Broadcast";
         toggleBtn.classList.add("stop");
-        document.getElementById("driverName").setAttribute("disabled", "disabled");
-        routeSelect.setAttribute("disabled", "disabled");
-        busSelect.setAttribute("disabled", "disabled");
+        driverNameEl.disabled = true;
+        busNameEl.disabled = true;
+        plateNumberEl.disabled = true;
+        destinationEl.disabled = true;
     }
 
     function stopTrip() {
@@ -230,9 +322,10 @@
         setStatus("Broadcast stopped.", "idle");
         toggleBtn.textContent = "Start Route Broadcast";
         toggleBtn.classList.remove("stop");
-        document.getElementById("driverName").removeAttribute("disabled");
-        routeSelect.removeAttribute("disabled");
-        busSelect.removeAttribute("disabled");
+        driverNameEl.disabled = false;
+        busNameEl.disabled = false;
+        plateNumberEl.disabled = false;
+        destinationEl.disabled = false;
     }
 </script>
 </body>

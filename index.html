@@ -346,13 +346,12 @@
             }
         }
 
-        // Does this trip's route match the destination the passenger typed?
+        // Does this trip's destination match what the passenger typed?
         function matchesDestination(trip, searchTerm) {
             if (!searchTerm) return false;
-            const routeName = trip.routes?.route_name?.toLowerCase() || '';
-            const waypoints = (trip.routes?.waypoints || []);
-            const waypointsText = (Array.isArray(waypoints) ? waypoints.join(' ') : JSON.stringify(waypoints)).toLowerCase();
-            return routeName.includes(searchTerm) || waypointsText.includes(searchTerm);
+            const destination = (trip.destination || '').toLowerCase();
+            const routeName = (trip.route_name || trip.routes?.route_name || '').toLowerCase();
+            return destination.includes(searchTerm) || routeName.includes(searchTerm);
         }
 
         // 3. Render Markers & Sidebar Cards
@@ -407,8 +406,12 @@
 
                 const lat = parseFloat(trip.current_lat);
                 const lng = parseFloat(trip.current_lng);
-                const busName = trip.buses?.bus_number || "Express Bus";
-                const routeName = trip.routes?.route_name || "Active Route";
+                const busNickname = trip.buses?.bus_name || trip.bus_name || '';
+                const plateNumber = trip.buses?.plate_number || trip.plate_number || trip.buses?.bus_number || '';
+                const busName = busNickname && plateNumber
+                    ? `${busNickname} (${plateNumber})`
+                    : (busNickname || plateNumber || "Express Bus");
+                const routeName = trip.route_name || trip.routes?.route_name || "Active Route";
                 const occupancy = trip.current_occupancy || 0;
                 const capacity = trip.buses?.total_capacity || 40;
                 const fillPercent = Math.min(Math.round((occupancy / capacity) * 100), 100);
