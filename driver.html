@@ -278,6 +278,7 @@
         watchId = navigator.geolocation.watchPosition(
             position => {
                 const payload = {
+                    bus_id: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d", // matches the pre-seeded demo row in active_trips
                     driver_name: driverName,
                     bus_name: busName,
                     plate_number: plateNumber,
